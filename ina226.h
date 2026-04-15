@@ -17,8 +17,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include "stm32fxxx_hal.h"
+#include "main.h"
 
 /* ---------------- I2C ADDRESS ---------------- */
 #define INA226_ADDR (0x40 << 1)   // default 7-bit address shifted for STM32 HAL
