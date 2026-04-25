@@ -25,106 +25,159 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-
 #include "ina226.h"
 
-/* External I2C handle (defined in main.c or i2c.c) */
-extern I2C_HandleTypeDef hi2c1;
+/* =========================
+   INTERNAL I2C FUNCTIONS
+   ========================= */
 
-/* =========================================================
- * LOW LEVEL I2C FUNCTIONS
- * ========================================================= */
+static HAL_StatusTypeDef i2c_write(INA226_t *dev, uint8_t reg, uint16_t val)
+{
+    uint8_t data[2] = { val >> 8, val & 0xFF };
 
-HAL_StatusTypeDef INA226_WriteRegister(uint8_t reg, uint16_t value)
+    return HAL_I2C_Mem_Write(dev->hi2c,
+                             dev->address,
+                             reg,
+                             I2C_MEMADD_SIZE_8BIT,
+                             data,
+                             2,
+                             100);
+}
+
+static HAL_StatusTypeDef i2c_read(INA226_t *dev, uint8_t reg, uint16_t *val)
 {
     uint8_t data[2];
 
-    data[0] = (value >> 8) & 0xFF;  // MSB
-    data[1] = value & 0xFF;         // LSB
+    HAL_StatusTypeDef st = HAL_I2C_Mem_Read(dev->hi2c,
+                                            dev->address,
+                                            reg,
+                                            I2C_MEMADD_SIZE_8BIT,
+                                            data,
+                                            2,
+                                            100);
 
-    return HAL_I2C_Mem_Write(
-        &hi2c1,
-        INA226_ADDR,
-        reg,
-        I2C_MEMADD_SIZE_8BIT,
-        data,
-        2,
-        HAL_MAX_DELAY
-    );
+    if (st != HAL_OK)
+        return st;
+
+    *val = (data[0] << 8) | data[1];
+    return HAL_OK;
 }
 
-HAL_StatusTypeDef INA226_ReadRegister(uint8_t reg, uint16_t *value)
+/* =========================
+   INIT
+   ========================= */
+
+HAL_StatusTypeDef INA226_Init(INA226_t *dev,
+                             I2C_HandleTypeDef *hi2c,
+                             uint8_t addr_7bit)
 {
-    uint8_t data[2];
+    dev->hi2c = hi2c;
+    dev->address = addr_7bit << 1; // HAL uses 8-bit
+    dev->current_lsb = 0.0f;
+    dev->power_lsb = 0.0f;
 
-    HAL_StatusTypeDef ret = HAL_I2C_Mem_Read(
-        &hi2c1,
-        INA226_ADDR,
-        reg,
-        I2C_MEMADD_SIZE_8BIT,
-        data,
-        2,
-        HAL_MAX_DELAY
-    );
-
-    if (ret == HAL_OK)
-    {
-        *value = (data[0] << 8) | data[1];
-    }
-
-    return ret;
+    return HAL_OK;
 }
 
-/* =========================================================
- * INITIALISATION
- * ========================================================= */
+/* =========================
+   CONFIG
+   ========================= */
 
-void INA226_SetConfig(uint16_t config)
+HAL_StatusTypeDef INA226_Configure(INA226_t *dev, uint16_t config)
 {
-    INA226_WriteRegister(INA226_REG_CONFIG, config);
+    return i2c_write(dev, INA226_REG_CONFIG, config);
 }
 
-void INA226_SetCalibration(uint16_t calib)
+/* =========================
+   CALIBRATION
+   ========================= */
+
+HAL_StatusTypeDef INA226_Calibrate(INA226_t *dev,
+                                   float shunt,
+                                   float max_current)
 {
-    INA226_WriteRegister(INA226_REG_CALIB, calib);
+    if (shunt <= 0.0f || max_current <= 0.0f)
+        return HAL_ERROR;
+
+    dev->current_lsb = max_current / 32768.0f;
+
+    uint16_t cal = (uint16_t)(0.00512f / (dev->current_lsb * shunt));
+    if (cal == 0) cal = 1;
+
+    dev->power_lsb = 25.0f * dev->current_lsb;
+
+    return i2c_write(dev, INA226_REG_CALIB, cal);
 }
 
-void INA226_Init(void)
-{
-    /* Simple default configuration:
-     * Continuous mode, stable readings (example)
-     */
-    INA226_SetConfig(0x4127);
+/* =========================
+   READ FUNCTIONS
+   ========================= */
 
-    /* Example calibration (USER MUST ADJUST FOR SHUNT) */
-    INA226_SetCalibration(0x068E);
-}
-
-/* =========================================================
- * MEASUREMENTS
- * ========================================================= */
-
-float INA226_ReadBusVoltage_V(void)
-{
-    uint16_t raw;
-    INA226_ReadRegister(INA226_REG_BUS_V, &raw);
-
-    /* LSB = 1.25 mV */
-    return raw * 0.00125f;
-}
-
-float INA226_ReadCurrent_A(float current_LSB)
+HAL_StatusTypeDef INA226_ReadCurrent(INA226_t *dev, float *current)
 {
     uint16_t raw;
-    INA226_ReadRegister(INA226_REG_CURRENT, &raw);
 
-    return (int16_t)raw * current_LSB;
+    if (i2c_read(dev, INA226_REG_CURRENT, &raw) != HAL_OK)
+        return HAL_ERROR;
+
+    *current = (int16_t)raw * dev->current_lsb;
+    return HAL_OK;
 }
 
-float INA226_ReadPower_W(float power_LSB)
+HAL_StatusTypeDef INA226_ReadPower(INA226_t *dev, float *power)
 {
     uint16_t raw;
-    INA226_ReadRegister(INA226_REG_POWER, &raw);
 
-    return raw * power_LSB;
+    if (i2c_read(dev, INA226_REG_POWER, &raw) != HAL_OK)
+        return HAL_ERROR;
+
+    *power = raw * dev->power_lsb;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef INA226_ReadBusVoltage(INA226_t *dev, float *v)
+{
+    uint16_t raw;
+
+    if (i2c_read(dev, INA226_REG_BUS_V, &raw) != HAL_OK)
+        return HAL_ERROR;
+
+    *v = raw * 1.25e-3f;
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef INA226_ReadShuntVoltage(INA226_t *dev, float *v)
+{
+    uint16_t raw;
+
+    if (i2c_read(dev, INA226_REG_SHUNT_V, &raw) != HAL_OK)
+        return HAL_ERROR;
+
+    *v = (int16_t)raw * 2.5e-6f;
+    return HAL_OK;
+}
+
+/* =========================
+   SETUP (ALL-IN-ONE)
+   ========================= */
+
+void INA226_Setup(INA226_t *dev,
+                  I2C_HandleTypeDef *hi2c,
+                  uint8_t addr)
+{
+    INA226_Init(dev, hi2c, addr);
+
+    uint16_t config =
+        (0x4 << 9) |   // AVG = 16
+        (0x4 << 6) |   // VBUSCT
+        (0x4 << 3) |   // VSHCT
+        (0x7);         // continuous mode
+
+    if (INA226_Configure(dev, config) != HAL_OK)
+        Error_Handler();
+
+    HAL_Delay(10);
+
+    if (INA226_Calibrate(dev, 0.01f, 2.0f) != HAL_OK)
+        Error_Handler();
 }
