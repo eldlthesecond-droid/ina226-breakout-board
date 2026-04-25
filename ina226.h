@@ -29,40 +29,33 @@
 #ifndef INA226_H
 #define INA226_H
 
-#ifdef __cplusplus
-extern "C" {
+#include "main.h"
+
+/* Registers */
+#define INA226_REG_CONFIG      0x00
+#define INA226_REG_SHUNT_V     0x01
+#define INA226_REG_BUS_V       0x02
+#define INA226_REG_POWER       0x03
+#define INA226_REG_CURRENT     0x04
+#define INA226_REG_CALIB       0x05
+
+typedef struct {
+    I2C_HandleTypeDef *hi2c;
+    uint16_t address;        // HAL expects 8-bit address
+    float current_lsb;
+    float power_lsb;
+} INA226_t;
+
+/* API */
+HAL_StatusTypeDef INA226_Init(INA226_t *dev, I2C_HandleTypeDef *hi2c, uint8_t addr_7bit);
+HAL_StatusTypeDef INA226_Configure(INA226_t *dev, uint16_t config);
+HAL_StatusTypeDef INA226_Calibrate(INA226_t *dev, float shunt, float max_current);
+
+HAL_StatusTypeDef INA226_ReadCurrent(INA226_t *dev, float *current);
+HAL_StatusTypeDef INA226_ReadPower(INA226_t *dev, float *power);
+HAL_StatusTypeDef INA226_ReadShuntVoltage(INA226_t *dev, float *v);
+HAL_StatusTypeDef INA226_ReadBusVoltage(INA226_t *dev, float *v);
+
+void INA226_Setup(INA226_t *dev, I2C_HandleTypeDef *hi2c, uint8_t addr);
+
 #endif
-
-#include "stm32fxxx_hal.h"
-
-/* ---------------- I2C ADDRESS ---------------- */
-#define INA226_ADDR (0x40 << 1)   // default 7-bit address shifted for STM32 HAL
-
-/* ---------------- REGISTERS ---------------- */
-#define INA226_REG_CONFIG     0x00
-#define INA226_REG_SHUNT_V    0x01
-#define INA226_REG_BUS_V      0x02
-#define INA226_REG_POWER      0x03
-#define INA226_REG_CURRENT    0x04
-#define INA226_REG_CALIB      0x05
-#define INA226_REG_MASK       0x06
-#define INA226_REG_ALERT      0x07
-
-/* ---------------- FUNCTION PROTOTYPES ---------------- */
-HAL_StatusTypeDef INA226_WriteRegister(uint8_t reg, uint16_t value);
-HAL_StatusTypeDef INA226_ReadRegister(uint8_t reg, uint16_t *value);
-
-void INA226_Init(void);
-void INA226_SetConfig(uint16_t config);
-void INA226_SetCalibration(uint16_t calib);
-
-/* Measurements */
-float INA226_ReadBusVoltage_V(void);
-float INA226_ReadCurrent_A(float current_LSB);
-float INA226_ReadPower_W(float power_LSB);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* INA226_H */
